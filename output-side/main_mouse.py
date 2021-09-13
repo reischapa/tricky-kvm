@@ -2,53 +2,105 @@
 
 import socket
 import struct
+import signal
+import os
+import sys
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock = None
+fd = None
 
-sock.bind(("0.0.0.0", 5005))
+config = {
+  "reportId": 1,
+  "deviceFilePath": "/dev/hidg1",
+  "socketBindAddress": "0.0.0.0",
+  "socketBindPort": 5005
+}
 
-fd = open('/dev/hidg1', 'ab+', buffering=0)
+mouseState = {
+  "mouse1State": False,
+  "mouse2State": False
+}
 
-mouse1State = False
-mouse2State = False
-reportId = 1
+def init_socket():
+  global sock
 
-while True:
-  data, addr = sock.recvfrom(1024)
-  processedData = data.decode('utf-8')
-  parts = processedData.split('_');
+  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
+  sock.bind((config["socketBindAddress"], config["socketBindPort"]))
 
-  value = int(parts[1])
+def init_fd():
+  global fd
 
-  if value > -127 and value < 127:
-    movement = struct.pack("h", value)[0]
+  fd = open(config["deviceFilePath"], 'ab+', buffering=0)
 
-    msg = bytearray(4)
+def listen():
+  global config
+  global mouseState
+  global fd
 
-    msg[0] = struct.pack("h", reportId)[0] 
+  if fd == None:
+    init_fd()
 
-    if parts[0] == 'M1':
-      mouse1State = bool(int(parts[1]))
+  if sock == None:
+    init_socket()
 
-    if parts[0] == 'M2':
-      mouse2State = bool(int(parts[1]))
+  while True:
+    if fd == None:
+      break;
 
-    buttonsState = int(mouse1State) + int(mouse2State) * 2 
+    data, addr = sock.recvfrom(1024)
+    processedData = data.decode('utf-8')
+    parts = processedData.split('_');
 
-    msg[1] = struct.pack("h", buttonsState)[0]
+    value = int(parts[1])
 
-    if parts[0] == 'X':
-      msg[2] = movement
-    else:
-      msg[2] = b'\x00'[0];
+    if value >= -127 and value <= 127:
+      movement = struct.pack("h", value)[0]
 
-    if parts[0] == 'Y':
-      msg[3] = movement 
-    else:
-      msg[3] = b'\x00'[0]
+      msg = bytearray(4)
 
-    fd.write(msg)
+      msg[0] = struct.pack("h", config['reportId'])[0] 
 
+      if parts[0] == 'M1':
+        mouseState['mouse1State'] = bool(int(parts[1]))
 
+      if parts[0] == 'M2':
+        mouseState['mouse2State'] = bool(int(parts[1]))
 
+      buttonsState = int(mouseState['mouse1State']) + int(mouseState['mouse2State']) * 2 
+
+      msg[1] = struct.pack("h", buttonsState)[0]
+
+      if parts[0] == 'X':
+        msg[2] = movement
+      else:
+        msg[2] = b'\x00'[0];
+
+      if parts[0] == 'Y':
+        msg[3] = movement 
+      else:
+        msg[3] = b'\x00'[0]
+
+      fd.write(msg)
+
+def cleanup(signum, frame):
+  global fd
+
+  if fd != None:
+    fd.close()
+    fd = None
+
+  if sock != None:
+    sock.close()
+    sock = None
+
+  print('Cleaned up. Exiting...')
+
+  sys.exit()
+
+signal.signal(signal.SIGUSR2, cleanup)
+
+if __name__ == "__main__": 
+  print(os.getpid())
+
+  listen()
  
